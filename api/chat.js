@@ -27,7 +27,10 @@ export default async function handler(req) {
     ;({ messages, context } = await req.json())
     if (!Array.isArray(messages)) throw new Error()
   } catch {
-    return new Response(JSON.stringify({ error: 'messages array required' }), { status: 400 })
+    return new Response(JSON.stringify({ error: 'messages array required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   const system = context
@@ -43,61 +46,25 @@ export default async function handler(req) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      stream: true,
+      max_tokens: 1024,
       system,
       messages,
     }),
   })
 
+  const data = await anthropicRes.json()
+
   if (!anthropicRes.ok) {
-    const err = await anthropicRes.text()
-    const msg = anthropicRes.status === 401 ? 'Invalid API key' : `Anthropic error: ${err}`
-    const stream = new ReadableStream({
-      start(c) {
-        c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
-        c.close()
-      }
+    const msg = anthropicRes.status === 401
+      ? 'Invalid API key'
+      : (data.error?.message || `Anthropic error ${anthropicRes.status}`)
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
     })
-    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
   }
 
-  // Transform Anthropic's SSE format into our frontend's simpler format.
-  // Buffer across chunks so we never split a JSON line mid-parse.
-  const enc = new TextEncoder()
-  const dec = new TextDecoder()
-  let buf = ''
-  const { readable, writable } = new TransformStream({
-    transform(chunk, controller) {
-      buf += dec.decode(chunk, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() // hold the incomplete trailing line for next chunk
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6).trim()
-        if (!data) continue
-        try {
-          const parsed = JSON.parse(data)
-          if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
-            controller.enqueue(enc.encode(`data: ${JSON.stringify({ text: parsed.delta.text })}\n\n`))
-          } else if (parsed.type === 'message_stop') {
-            controller.enqueue(enc.encode('data: [DONE]\n\n'))
-          }
-        } catch { /* skip malformed lines */ }
-      }
-    },
-    flush(controller) {
-      controller.enqueue(enc.encode('data: [DONE]\n\n'))
-    }
-  })
-
-  anthropicRes.body.pipeTo(writable)
-
-  return new Response(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Access-Control-Allow-Origin': '*',
-    },
+  return new Response(JSON.stringify({ text: data.content?.[0]?.text ?? '' }), {
+    headers: { 'Content-Type': 'application/json' },
   })
 }

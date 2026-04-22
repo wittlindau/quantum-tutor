@@ -55,8 +55,10 @@ function Message({ msg }) {
     <div className={`chat-msg chat-msg-${msg.role}`}>
       {msg.role === 'assistant' && <div className="chat-avatar">ψ</div>}
       <div className="chat-bubble">
-        <MessageContent text={msg.content} />
-        {msg.streaming && <span className="chat-cursor" />}
+        {msg.loading
+          ? <div className="chat-thinking"><span /><span /><span /></div>
+          : <MessageContent text={msg.content} />
+        }
         {msg.error && <div className="chat-error">{msg.error}</div>}
       </div>
     </div>
@@ -136,7 +138,7 @@ export default function Chatbot({ activeUnit, activeSection }) {
 
     const userMsg = { role: 'user', content: text }
     const history = [...messages, userMsg]
-    setMessages([...history, { role: 'assistant', content: '', streaming: true }])
+    setMessages([...history, { role: 'assistant', content: '', loading: true }])
     setLoading(true)
 
     const apiMessages = history
@@ -154,40 +156,12 @@ export default function Chatbot({ activeUnit, activeSection }) {
         signal: controller.signal,
       })
 
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
-
-      const reader = res.body.getReader()
-      const dec = new TextDecoder()
-      let accumulated = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const lines = dec.decode(value).split('\n')
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6)
-          if (data === '[DONE]') break
-          try {
-            const parsed = JSON.parse(data)
-            if (parsed.error) throw new Error(parsed.error)
-            if (parsed.text) {
-              accumulated += parsed.text
-              setMessages(prev => {
-                const updated = [...prev]
-                updated[updated.length - 1] = { role: 'assistant', content: accumulated, streaming: true }
-                return updated
-              })
-            }
-          } catch (e) {
-            if (!e.message.includes('JSON')) throw e
-          }
-        }
-      }
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
 
       setMessages(prev => {
         const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: accumulated, streaming: false }
+        updated[updated.length - 1] = { role: 'assistant', content: data.text, loading: false }
         return updated
       })
     } catch (err) {
@@ -195,9 +169,9 @@ export default function Chatbot({ activeUnit, activeSection }) {
       setMessages(prev => {
         const updated = [...prev]
         updated[updated.length - 1] = {
-          role: 'assistant', content: '', streaming: false,
-          error: err.message.includes('Failed to fetch') || err.message.includes('Server error')
-            ? 'Cannot reach API server — make sure you ran `npm run dev` (not just `npm run dev:ui`) and added your key to .env'
+          role: 'assistant', content: '', loading: false,
+          error: err.message.includes('Failed to fetch')
+            ? 'Cannot reach API server — make sure you ran `npm run dev` and added your key to .env'
             : err.message,
         }
         return updated
