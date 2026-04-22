@@ -1,4 +1,5 @@
 export const config = { runtime: 'edge' }
+export const maxDuration = 60
 
 const SYSTEM_PROMPT = `You are a quantum mechanics teaching assistant for PHYS 50 (Introductory Quantum Mechanics) at Dartmouth College. Your role is to help students understand quantum mechanics clearly and rigorously.
 
