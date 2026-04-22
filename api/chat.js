@@ -62,12 +62,17 @@ export default async function handler(req) {
     return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
   }
 
-  // Transform Anthropic's SSE format into our frontend's simpler format
+  // Transform Anthropic's SSE format into our frontend's simpler format.
+  // Buffer across chunks so we never split a JSON line mid-parse.
   const enc = new TextEncoder()
   const dec = new TextDecoder()
+  let buf = ''
   const { readable, writable } = new TransformStream({
     transform(chunk, controller) {
-      for (const line of dec.decode(chunk).split('\n')) {
+      buf += dec.decode(chunk, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() // hold the incomplete trailing line for next chunk
+      for (const line of lines) {
         if (!line.startsWith('data: ')) continue
         const data = line.slice(6).trim()
         if (!data) continue
@@ -80,6 +85,9 @@ export default async function handler(req) {
           }
         } catch { /* skip malformed lines */ }
       }
+    },
+    flush(controller) {
+      controller.enqueue(enc.encode('data: [DONE]\n\n'))
     }
   })
 
